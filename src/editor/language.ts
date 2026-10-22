@@ -6,6 +6,7 @@ import {
   snippetCompletion,
 } from '@codemirror/autocomplete'
 import { HighlightStyle, LanguageSupport, StreamLanguage, type StringStream, syntaxHighlighting } from '@codemirror/language'
+import type { EditorState } from '@codemirror/state'
 import { tags as t } from '@lezer/highlight'
 import { DIAGRAM_KEYWORDS } from '../lib/fix/text'
 
@@ -169,6 +170,21 @@ const BODY_COMPLETIONS: Completion[] = [
   { label: '-->>', type: 'operator', detail: 'reply' },
 ]
 
+const PLAIN_WORDS = new Set([...HEADER_COMPLETIONS, ...BODY_COMPLETIONS].filter((c) => !c.apply).map((c) => c.label))
+
+/**
+ * A keyword, or a word used elsewhere in the document: accepting it changes nothing, so no popup
+ * stays open to swallow the Enter after `end` or an existing node id.
+ */
+function isWhole(state: EditorState, from: number, word: string): boolean {
+  if (!word) return false
+  if (PLAIN_WORDS.has(word)) return true
+  for (const m of state.doc.toString().matchAll(new RegExp(`(^|[^\\p{L}\\p{N}_])${word}(?![\\p{L}\\p{N}_])`, 'gu'))) {
+    if (m.index + m[1].length !== from) return true
+  }
+  return false
+}
+
 function mermaidCompletions(context: CompletionContext): CompletionResult | null {
   const word = context.matchBefore(/[\w-]+/)
   if (!word && !context.explicit) return null
@@ -177,13 +193,26 @@ function mermaidCompletions(context: CompletionContext): CompletionResult | null
   const lineStart = context.state.doc.lineAt(context.pos).from
   const onlyIndent = !context.state.doc.sliceString(lineStart, word ? word.from : context.pos).trim()
   if (!atHeader && !onlyIndent) return null
-  return { from: word ? word.from : context.pos, options: atHeader ? HEADER_COMPLETIONS : BODY_COMPLETIONS, validFor: /^[\w-]*$/ }
+  const options = atHeader ? HEADER_COMPLETIONS : BODY_COMPLETIONS
+  // a snippet still expands when its keyword is typed out
+  const done = (state: EditorState, from: number, text: string) => isWhole(state, from, text) && !options.some((o) => o.apply && o.label === text)
+  const from = word ? word.from : context.pos
+  if (done(context.state, from, word?.text ?? '')) return null
+  return { from, options, validFor: (text, from, _to, state) => /^[\w-]*$/.test(text) && !done(state, from, text) }
+}
+
+function anyWord(context: CompletionContext): CompletionResult | null {
+  const result = completeAnyWord(context) as CompletionResult | null
+  if (!result) return null
+  if (isWhole(context.state, result.from, context.state.sliceDoc(result.from, context.pos))) return null
+  const word = new RegExp(`${(result.validFor as RegExp).source}$`, 'u')
+  return { ...result, validFor: (text, from, _to, state) => word.test(text) && !isWhole(state, from, text) }
 }
 
 export function mermaid() {
   return new LanguageSupport(mermaidStream, [
     syntaxHighlighting(mermaidHighlight),
     mermaidStream.data.of({ autocomplete: mermaidCompletions }),
-    mermaidStream.data.of({ autocomplete: completeAnyWord }),
+    mermaidStream.data.of({ autocomplete: anyWord }),
   ])
 }

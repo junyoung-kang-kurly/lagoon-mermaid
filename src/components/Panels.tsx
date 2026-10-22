@@ -69,6 +69,7 @@ export function SettingsPanel({ value, onChange }: { value: DiagramSettings; onC
         <Segmented
           value={value.curve}
           onChange={(v) => set('curve', v)}
+          disabled={value.layout === 'elk'}
           options={[
             { value: 'basis', label: 'basis' },
             { value: 'linear', label: 'linear' },
@@ -76,6 +77,7 @@ export function SettingsPanel({ value, onChange }: { value: DiagramSettings; onC
             { value: 'cardinal', label: 'cardinal' },
           ]}
         />
+        {value.layout === 'elk' && <div className="text-[11.5px] text-muted">{t('settings.curveElk')}</div>}
       </Field>
       <Field label={t('settings.advanced')}>
         <textarea
@@ -132,22 +134,47 @@ export function HistoryPanel({
   onClear(): void
 }) {
   const lang = useLang()
+  const [confirming, setConfirming] = useState(false)
   return (
-    <div className="w-full sm:w-[340px]">
-      <div className="flex items-center justify-between px-2.5 pb-2 pt-1.5">
-        <span className="text-[13px] font-semibold">{t('history.title')}</span>
-        <div className="flex gap-1">
-          <Button size="sm" variant="ghost" icon={<Bookmark className="size-3.5" />} onClick={onSave}>
-            {t('history.saveNow')}
-          </Button>
-          {items.length > 0 && (
-            <Button size="sm" variant="danger" onClick={onClear} aria-label={t('history.clear')}>
-              <Trash2 className="size-3.5" />
+    // a column, so on a short screen only the list scrolls and the header stays in view
+    <div className="flex min-h-0 w-full flex-col sm:w-[340px]">
+      {/* distinct keys: reusing the header's DOM would leave focus on the destructive button */}
+      {confirming ? (
+        <div key="confirm" className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-lg bg-danger-soft px-2.5 py-1.5">
+          <span className="text-[12.5px] font-medium text-danger">{t('history.clearConfirm', { n: items.length })}</span>
+          <div className="flex gap-1">
+            <Button size="sm" variant="ghost" autoFocus onClick={() => setConfirming(false)}>
+              {t('common.cancel')}
             </Button>
-          )}
+            <Button
+              size="sm"
+              variant="danger"
+              icon={<Trash2 className="size-3.5" />}
+              onClick={() => {
+                setConfirming(false)
+                onClear()
+              }}
+            >
+              {t('history.clear')}
+            </Button>
+          </div>
         </div>
-      </div>
-      <div className="max-h-[60vh] overflow-y-auto">
+      ) : (
+        <div key="header" className="flex shrink-0 items-center justify-between px-2.5 pb-2 pt-1.5">
+          <span className="text-[13px] font-semibold">{t('history.title')}</span>
+          <div className="flex gap-1">
+            <Button size="sm" variant="ghost" icon={<Bookmark className="size-3.5" />} onClick={onSave}>
+              {t('history.saveNow')}
+            </Button>
+            {items.length > 0 && (
+              <Button size="sm" variant="danger" onClick={() => setConfirming(true)} aria-label={t('history.clear')} title={t('history.clear')}>
+                <Trash2 className="size-3.5" />
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="max-h-[60vh] min-h-0 overflow-y-auto overscroll-contain">
         {items.length === 0 && <div className="px-3 py-8 text-center text-[12.5px] leading-relaxed text-muted">{t('history.empty')}</div>}
         {items.map((s) => {
           const lines = s.code.split('\n').filter((l) => l.trim() && !l.trim().startsWith('%%'))
@@ -164,7 +191,7 @@ export function HistoryPanel({
                   <span className="shrink-0 text-[11px] text-muted">{ago(lang, s.ts)}</span>
                 </span>
                 <span className="mt-0.5 block truncate font-mono text-[11px] text-muted">
-                  {lines[0]?.trim()} · {lines.length} lines
+                  {lines[0]?.trim()} · {lines.length === 1 ? t('common.lineOne') : t('common.lines', { n: lines.length })}
                 </span>
               </span>
               <span className="hidden self-center text-[11.5px] font-medium text-accent group-hover:inline">{t('history.restore')}</span>

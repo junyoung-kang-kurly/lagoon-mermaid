@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { t, useLang } from '../lib/i18n'
 import { renderDiagram } from '../lib/mermaid'
 import { BROKEN_SAMPLE, SAMPLES, type Sample } from '../lib/samples'
-import { Modal, cx } from './ui'
+import { Modal } from './ui'
 
 const cache = new Map<string, string>()
 
@@ -64,7 +64,6 @@ export function TemplatesDialog({ open, config, onClose, onPick }: Props) {
         <label className="ml-auto flex h-9 w-full items-center gap-2 rounded-lg border border-line-strong bg-surface px-3 text-[13px] focus-within:border-accent sm:w-64">
           <Search className="size-4 text-muted" />
           <input
-            autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t('templates.search')}
@@ -98,6 +97,7 @@ export function TemplatesDialog({ open, config, onClose, onPick }: Props) {
             <TemplateCard key={s.id} sample={s} svg={thumb(s.id)} index={i} onPick={() => onPick(s.code, s.name)} />
           ))}
         </div>
+        {list.length === 0 && <div className="py-10 text-center text-[13px] text-muted">{t('templates.empty')}</div>}
       </div>
     </Modal>
   )
@@ -110,21 +110,23 @@ function TemplateCard({ sample, svg, index, onPick }: { sample: Sample; svg: str
       className="group flex animate-rise flex-col overflow-hidden rounded-xl border border-line bg-surface text-left transition-all hover:-translate-y-0.5 hover:border-accent/50 hover:shadow-soft"
       style={{ animationDelay: `${Math.min(index, 12) * 25}ms` }}
     >
-      <div className="canvas-grid relative flex aspect-[4/3] items-center justify-center overflow-hidden border-b border-line p-3">
+      <div aria-hidden="true" className="canvas-grid relative flex aspect-[4/3] items-center justify-center overflow-hidden border-b border-line p-3">
         {svg === undefined ? (
           <div className="shimmer absolute inset-3 rounded-lg" />
         ) : svg ? (
+          // isolate: mermaid's sankey links use mix-blend-mode, which would blend with the dark grid behind the thumbnail
           <div
-            className="pointer-events-none flex h-full w-full items-center justify-center [&_svg]:h-auto [&_svg]:max-h-full [&_svg]:max-w-full"
+            className="pointer-events-none isolate flex h-full w-full items-center justify-center [&_svg]:h-auto [&_svg]:max-h-full [&_svg]:max-w-full"
             dangerouslySetInnerHTML={{ __html: svg }}
           />
         ) : (
           <span className="font-mono text-[11px] text-muted">{sample.id}</span>
         )}
       </div>
-      <div className="flex items-center justify-between gap-2 px-3 py-2.5">
-        <span className="truncate text-[13px] font-medium">{sample.name}</span>
-        <span className={cx('rounded px-1.5 py-0.5 text-[10.5px] uppercase tracking-wide text-muted', 'bg-surface-3')}>{sample.category}</span>
+      {/* phones stack the badge under a name that may wrap; wider cards give the name priority over the badge */}
+      <div className="flex flex-col items-start gap-1 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+        <span className="max-w-full text-[13px] font-medium sm:shrink-0 sm:truncate">{sample.name}</span>
+        <span className="min-w-0 max-w-full truncate rounded bg-surface-3 px-1.5 py-0.5 text-[10.5px] uppercase tracking-wide text-muted">{sample.category}</span>
       </div>
     </button>
   )

@@ -35,6 +35,8 @@ export interface EditorHandle {
   goTo(line: number, column?: number, length?: number): void
   flashLine(line: number): void
   getCode(): string
+  /** px at the bottom covered by an overlay (the error card); scrolling and the last lines stay above it */
+  setBottomInset(px: number): void
 }
 
 interface Options {
@@ -87,6 +89,7 @@ export function useEditor(options: Options): EditorHandle {
 }
 
 function createEditor(options: { readonly current: Options }): EditorHandle {
+  let inset = 0
   const extensions: Extension[] = [
     lineNumbers(),
     highlightActiveLineGutter(),
@@ -105,6 +108,7 @@ function createEditor(options: { readonly current: Options }): EditorHandle {
     baseTheme,
     placeholder(options.current.placeholderText),
     EditorView.lineWrapping,
+    EditorView.scrollMargins.of(() => ({ bottom: inset && inset + 8 })),
     keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap, ...historyKeymap, ...completionKeymap, indentWithTab]),
     EditorView.updateListener.of((u) => {
       if (u.docChanged) options.current.onChange(u.state.doc.toString())
@@ -155,12 +159,21 @@ function createEditor(options: { readonly current: Options }): EditorHandle {
     getCode() {
       return view.state.doc.toString()
     },
+    setBottomInset(px) {
+      if (px === inset) return
+      inset = px
+      view.dom.style.setProperty('--editor-inset', `${px}px`)
+      // the card can appear under the line being typed
+      if (view.hasFocus) view.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head) })
+      else view.requestMeasure()
+    },
   }
 }
 
-export function Editor({ editor, problem }: { editor: EditorHandle; problem: EditorProblem | null }) {
+export function Editor({ editor, problem, bottomInset = 0 }: { editor: EditorHandle; problem: EditorProblem | null; bottomInset?: number }) {
   const host = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => editor.attach(host.current!), [editor])
+  useEffect(() => editor.setBottomInset(bottomInset), [editor, bottomInset])
 
   useEffect(() => {
     const v = editor.view

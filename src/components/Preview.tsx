@@ -1,9 +1,10 @@
 import { History, Maximize, Minimize, Minus, MousePointerClick, Plus, ScanSearch, Sparkles, TriangleAlert } from 'lucide-react'
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import type { RenderStatus } from '../hooks/useDiagram'
 import { usePanZoom } from '../hooks/usePanZoom'
 import { svgSize } from '../lib/export'
 import { t, useLang } from '../lib/i18n'
+import { MOD } from '../lib/platform'
 import { Logo } from './Logo'
 import { Button, IconButton, cx } from './ui'
 
@@ -30,28 +31,44 @@ interface Props {
   renderCount: number
   bind?: (el: Element) => void
   grid: boolean
+  /** the diagram's own background, for a diagram theme lighter or darker than the app */
+  canvasBackground?: string
   fixReady: boolean
   onFix(): void
   onNodeClick(target: NodeTarget): void
 }
 
 const NODE_SELECTOR =
-  'g.node, g.actor, rect.actor, g.classGroup, g[id^="entity-"], g.statediagram-state, g.mindmap-node, g.section, g.task, rect.task, g.pieCircle, g.commit-bullets, g.kanban-item, g[id*="-entity-"], text.actor'
+  'g.node, g.actor, rect.actor, g.actor-man, g.classGroup, g[id^="entity-"], g.statediagram-state, g.mindmap-node, g.section, g.task, rect.task, g.pieCircle, g.commit-bullets, g.kanban-item, g[id*="-entity-"], text.actor'
+
+const clean = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim() || undefined
 
 function nodeFromTarget(target: Element | null, host: HTMLElement): NodeTarget | null {
   if (!target || !host.contains(target)) return null
   const el = target.closest(NODE_SELECTOR) ?? target.closest('g[id]')
   if (!el || el === host) return null
+  // a sequence participant is a box (or stick figure) named by its alias, beside its label
+  const actor = el.matches('g.actor-man') ? el : el.matches('rect.actor, text.actor') ? el.parentElement : null
+  if (actor) {
+    const name = actor.getAttribute('name') ?? actor.querySelector('[name]')?.getAttribute('name')
+    return { id: name ?? undefined, text: clean(actor.querySelector('text.actor')?.textContent), element: actor }
+  }
   const rawId = el.getAttribute('id') ?? ''
   const id = rawId
     .replace(/^lagoon-\d+-/, '')
     .match(/^(?:flowchart|classId|state|entity)-(.+?)-\d+$/)?.[1]
-  const text = (el.textContent ?? '').replace(/\s+/g, ' ').trim()
-  return { id, text: text || undefined, element: el }
+  return { id, text: clean(el.textContent), element: el }
+}
+
+/** grid dots that read on `color`: the light theme's on a light canvas, the dark theme's on a dark one */
+function dotFor(color: string) {
+  const n = parseInt(color.replace('#', '').slice(0, 6), 16)
+  const light = ((n >> 16) & 255) * 0.299 + ((n >> 8) & 255) * 0.587 + (n & 255) * 0.114 > 128
+  return light ? 'rgba(15, 23, 42, 0.09)' : 'rgba(255, 255, 255, 0.07)'
 }
 
 export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
-  { svg, status, hasError, diagramType, ms, renderCount, bind, grid, fixReady, onFix, onNodeClick },
+  { svg, status, hasError, diagramType, ms, renderCount, bind, grid, canvasBackground, fixReady, onFix, onNodeClick },
   ref,
 ) {
   useLang()
@@ -96,11 +113,16 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [svg, renderCount])
 
+  const { fit } = pz
   useEffect(() => {
-    const onChange = () => setFullscreen(document.fullscreenElement === frame.current)
+    const onChange = () => {
+      setFullscreen(document.fullscreenElement === frame.current)
+      // the frame changed size under a camera the user may have moved
+      requestAnimationFrame(() => fit(true))
+    }
     document.addEventListener('fullscreenchange', onChange)
     return () => document.removeEventListener('fullscreenchange', onChange)
-  }, [])
+  }, [fit])
 
   const toggleFullscreen = () => {
     if (document.fullscreenElement) void document.exitFullscreen()
@@ -109,9 +131,15 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 
   const stale = hasError && !!svg
   const zoomPct = Math.round(pz.view.k * 100)
+  // only behind a diagram: the empty and error messages are drawn in the app's colors
+  const paint = svg ? canvasBackground : undefined
 
   return (
-    <div ref={frame} className={cx('relative h-full min-h-0 overflow-hidden', grid ? 'canvas-grid' : 'canvas-plain')}>
+    <div
+      ref={frame}
+      className={cx('@container relative h-full min-h-0 overflow-hidden', grid ? 'canvas-grid' : 'canvas-plain')}
+      style={paint ? ({ '--canvas': paint, '--dot': dotFor(paint) } as CSSProperties) : undefined}
+    >
       <div ref={pz.ref} className="absolute inset-0 cursor-grab touch-none select-none">
         <div
           className={cx('absolute left-0 top-0 origin-top-left will-change-transform', pz.animating && 'transition-transform duration-300 ease-out')}
@@ -180,35 +208,40 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
         )}
       </div>
 
-      <div className="pointer-events-none absolute bottom-3 left-3 hidden items-center gap-1.5 text-[11.5px] text-muted md:flex">
-        <MousePointerClick className="size-3.5" />
-        {t('preview.clickToSource')} · {t('preview.hint')}
-      </div>
+      {/* the hint gives way to the zoom bar: cut short, then hidden in a narrow pane */}
+      <div className="pointer-events-none absolute inset-x-3 bottom-3 flex items-center justify-end gap-3">
+        <div className="mr-auto hidden min-w-0 items-center gap-1.5 text-[11.5px] text-muted @lg:flex">
+          <MousePointerClick className="size-3.5 shrink-0" />
+          <span className="truncate">
+            {t('preview.clickToSource')} · {t('preview.hint', { mod: MOD })}
+          </span>
+        </div>
 
-      <div
-        data-no-pan
-        className="absolute bottom-3 right-3 flex items-center gap-0.5 rounded-xl border border-line-strong bg-surface-2/90 p-1 shadow-soft backdrop-blur"
-      >
-        <IconButton label={t('preview.zoomOut')} shortcut="−" tooltipSide="top" onClick={() => pz.zoomBy(0.8, undefined, undefined, true)}>
-          <Minus className="size-4" />
-        </IconButton>
-        <button
-          onClick={() => pz.actualSize()}
-          className="h-8 min-w-[52px] rounded-lg px-1.5 font-mono text-[11.5px] tabular-nums text-text-2 hover:bg-surface-3 hover:text-text"
-          aria-label={t('preview.reset')}
+        <div
+          data-no-pan
+          className="pointer-events-auto flex shrink-0 items-center gap-0.5 rounded-xl border border-line-strong bg-surface-2/90 p-1 shadow-soft backdrop-blur"
         >
-          {zoomPct}%
-        </button>
-        <IconButton label={t('preview.zoomIn')} shortcut="+" tooltipSide="top" onClick={() => pz.zoomBy(1.25, undefined, undefined, true)}>
-          <Plus className="size-4" />
-        </IconButton>
-        <div className="mx-0.5 h-5 w-px bg-line" />
-        <IconButton label={t('preview.fit')} shortcut="0" tooltipSide="top" onClick={() => pz.fit(true)}>
-          <ScanSearch className="size-4" />
-        </IconButton>
-        <IconButton label={t('preview.fullscreen')} tooltipSide="top" onClick={toggleFullscreen}>
-          {fullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
-        </IconButton>
+          <IconButton label={t('preview.zoomOut')} shortcut="−" tooltipSide="top" onClick={() => pz.zoomBy(0.8, undefined, undefined, true)}>
+            <Minus className="size-4" />
+          </IconButton>
+          <button
+            onClick={() => pz.actualSize()}
+            className="h-8 min-w-[52px] rounded-lg px-1.5 font-mono text-[11.5px] tabular-nums text-text-2 hover:bg-surface-3 hover:text-text"
+            aria-label={t('preview.zoomLevel', { pct: zoomPct })}
+          >
+            {zoomPct}%
+          </button>
+          <IconButton label={t('preview.zoomIn')} shortcut="+" tooltipSide="top" onClick={() => pz.zoomBy(1.25, undefined, undefined, true)}>
+            <Plus className="size-4" />
+          </IconButton>
+          <div className="mx-0.5 h-5 w-px bg-line" />
+          <IconButton label={t('preview.fit')} shortcut="0" tooltipSide="top" onClick={() => pz.fit(true)}>
+            <ScanSearch className="size-4" />
+          </IconButton>
+          <IconButton label={fullscreen ? t('preview.exitFullscreen') : t('preview.fullscreen')} tooltipSide="top" onClick={toggleFullscreen}>
+            {fullscreen ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
+          </IconButton>
+        </div>
       </div>
     </div>
   )

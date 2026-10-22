@@ -4,6 +4,7 @@ import {
   Command as CommandIcon,
   Copy,
   Download,
+  Ellipsis,
   FileCode2,
   FilePlus2,
   FileUp,
@@ -40,10 +41,12 @@ import { Editor, useEditor } from './editor/Editor'
 import { useDiagram } from './hooks/useDiagram'
 import { explain } from './lib/explain'
 import { copyBlob, copyText, downloadBlob, downloadText, slugify, standaloneSvg, svgToPng } from './lib/export'
+import { extractMermaid, fileTitle, isTextFile } from './lib/files'
 import type { FixResult } from './lib/fix/engine'
 import { formatCode } from './lib/format'
 import { getLang, setLang, t, useLang } from './lib/i18n'
 import { type DiagramSettings, buildConfig, isDarkDiagram, plainTextConfig, renderDiagram } from './lib/mermaid'
+import { MOD, isMac } from './lib/platform'
 import { WELCOME } from './lib/samples'
 import { decodeHash, encodeDoc } from './lib/share'
 import { type Prefs, type Snapshot, clearHistory, loadDoc, loadHistory, loadPrefs, pushHistory, saveDoc, savePrefs } from './lib/storage'
@@ -54,19 +57,25 @@ interface Doc {
   settings: DiagramSettings
 }
 
-const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
-const MOD = isMac ? '⌘' : 'Ctrl'
+const SHIFT = isMac ? '⇧' : 'Shift'
+/** one label for a key chord: ⌘⇧F on Apple platforms, Ctrl+Shift+F elsewhere */
+const chord = (...keys: string[]) => keys.join(isMac ? '' : '+')
 
-function initialDoc(): { doc: Doc; fromLink: boolean } {
-  const shared = typeof location !== 'undefined' ? decodeHash(location.hash) : null
+/** a share-link fragment; decodeHash still rejects one that was cut off or damaged on the way */
+const SHARE_HASH = /^#(pako|base64):/
+
+function initialDoc(): { doc: Doc; link: 'loaded' | 'broken' | null } {
+  const hash = typeof location !== 'undefined' ? location.hash : ''
+  const shared = decodeHash(hash)
   const saved = loadDoc()
   if (shared) {
     // the stored doc may be a draft that never rendered, so autosave never kept a copy of it
     if (saved && saved.code !== shared.code) pushHistory({ code: saved.code, title: saved.title }, true)
-    return { doc: { code: shared.code, title: shared.title ?? '', settings: shared.settings }, fromLink: true }
+    return { doc: { code: shared.code, title: shared.title ?? '', settings: shared.settings }, link: 'loaded' }
   }
-  if (saved) return { doc: saved, fromLink: false }
-  return { doc: { code: WELCOME[getLang()], title: '', settings: { theme: 'auto', look: 'classic', layout: 'dagre', curve: 'basis', advanced: '' } }, fromLink: false }
+  const link = SHARE_HASH.test(hash) ? 'broken' : null
+  if (saved) return { doc: saved, link }
+  return { doc: { code: WELCOME[getLang()], title: '', settings: { theme: 'auto', look: 'classic', layout: 'dagre', curve: 'basis', advanced: '' } }, link }
 }
 
 function useMediaQuery(query: string) {
@@ -85,15 +94,12 @@ function useMediaQuery(query: string) {
   return match
 }
 
-function extractMermaid(text: string): string {
-  const block = text.match(/```mermaid[ \t]*\n([\s\S]*?)```/)
-  return block ? block[1].trimEnd() : text
-}
-
 export default function App() {
   const lang = useLang()
-  const [{ doc: seed, fromLink }] = useState(initialDoc)
+  const [{ doc: seed, link }] = useState(initialDoc)
   const [doc, setDoc] = useState<Doc>(seed)
+  /** code produced by a parser-verified auto-fix, known to be valid before the next render confirms it */
+  const [verifiedCode, setVerifiedCode] = useState<string | null>(null)
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs)
   const [history, setHistory] = useState<Snapshot[]>(loadHistory)
   const [cursor, setCursor] = useState({ line: 1, col: 1 })
@@ -101,8 +107,10 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [fixOpen, setFixOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [mobileTab, setMobileTab] = useState<'code' | 'preview'>('code')
   const [dragging, setDragging] = useState(false)
+  const [dockHeight, setDockHeight] = useState(0)
   const preview = useRef<PreviewHandle>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const wide = useMediaQuery('(min-width: 768px)')
@@ -130,9 +138,11 @@ export default function App() {
   }, [diagram.status, doc.code, doc.title])
 
   useEffect(() => {
-    if (!fromLink) return
+    // StrictMode runs this twice in development, and the first run already consumed the fragment
+    if (!link || !location.hash) return
     window.history.replaceState(null, '', location.pathname + location.search)
-    toast(t('share.loaded'), 'magic')
+    if (link === 'loaded') toast(t('share.loaded'), 'magic')
+    else toast(t('share.broken'), 'error')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -164,9 +174,10 @@ export default function App() {
   useEffect(() => {
     const onHash = () => {
       const shared = decodeHash(location.hash)
-      if (!shared) return
-      loadCode(shared.code, shared.title ?? '', shared.settings)
+      if (!shared && !SHARE_HASH.test(location.hash)) return
       window.history.replaceState(null, '', location.pathname + location.search)
+      if (!shared) return toast(t('share.broken'), 'error')
+      loadCode(shared.code, shared.title ?? '', shared.settings)
       toast(t('share.loaded'), 'magic')
     }
     window.addEventListener('hashchange', onHash)
@@ -178,8 +189,10 @@ export default function App() {
       if (!result) return
       editor.replace(result.code)
       setCode(result.code)
+      if (result.ok) setVerifiedCode(result.code)
       setFixOpen(false)
-      toast(`${t('fix.applied', { n: result.steps.length })} · ${MOD}Z`, 'magic')
+      const n = result.steps.length
+      toast(`${n === 1 ? t('fix.appliedOne') : t('fix.applied', { n })} · ${chord(MOD, 'Z')}`, 'magic')
     },
     [setCode, editor],
   )
@@ -206,7 +219,8 @@ export default function App() {
     }
   }, [doc, dark])
 
-  const background = isDarkDiagram(doc.settings, dark) ? '#0d1116' : '#ffffff'
+  const darkDiagram = isDarkDiagram(doc.settings, dark)
+  const background = darkDiagram ? '#0d1116' : '#ffffff'
   const fileBase = slugify(doc.title || t('app.untitled'))
 
   const pngBlob = useCallback(
@@ -234,10 +248,14 @@ export default function App() {
       }
       if (!diagram.svg) return toast(t('export.noDiagram'), 'error')
       try {
-        if (kind === 'svg') downloadText(standaloneSvg(diagram.svg), `${fileBase}.svg`, 'image/svg+xml')
-        else if (kind === 'copySvg') {
-          await copyText(standaloneSvg(diagram.svg))
-          return toast(t('export.copied'))
+        if (kind === 'svg' || kind === 'copySvg') {
+          // a dark theme draws light text, which vanishes on the white page an SVG usually lands on
+          const file = standaloneSvg(diagram.svg, darkDiagram ? background : undefined)
+          if (kind === 'svg') downloadText(file, `${fileBase}.svg`, 'image/svg+xml')
+          else {
+            await copyText(file)
+            return toast(t('export.copied'))
+          }
         } else if (kind === 'copyPng') {
           await copyBlob(pngBlob(2))
           return toast(t('export.copied'))
@@ -250,18 +268,28 @@ export default function App() {
         toast(t('export.failed'), 'error')
       }
     },
-    [doc.code, diagram.svg, fileBase, pngBlob],
+    [doc.code, diagram.svg, fileBase, pngBlob, darkDiagram, background],
   )
 
   const openFile = useCallback(
     async (file: File) => {
+      // an exported PNG/SVG dragged back in would replace the diagram with binary garbage
+      if (!isTextFile(file)) return toast(t('file.unsupported', { name: file.name }), 'error')
       // the editor keeps \n only, and a CRLF Markdown fence would not match either
       const text = (await file.text()).replace(/\r\n?/g, '\n')
-      loadCode(extractMermaid(text), file.name.replace(/\.(mmd|mermaid|md|txt)$/i, ''))
+      loadCode(extractMermaid(text), fileTitle(file.name))
       toast(t('toast.fileLoaded', { name: file.name }))
     },
     [loadCode],
   )
+
+  // the error card floats over the editor, which keeps its last lines and jump targets above it
+  const measureDock = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return
+    const observer = new ResizeObserver(() => setDockHeight(el.offsetHeight))
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   const format = useCallback(() => {
     const next = formatCode(doc.code)
@@ -364,26 +392,28 @@ export default function App() {
     }
   }, [openFile])
 
-  const commands: Command[] = useMemo(
-    () => [
-      { id: 'fix', label: t('cmd.fix'), group: 'Lagoon', icon: <WandSparkles className="size-4" />, shortcut: [MOD, '.'], disabled: diagram.fix.state !== 'ready', run: runFix },
-      { id: 'templates', label: t('toolbar.templates'), group: 'Lagoon', icon: <LayoutTemplate className="size-4" />, run: () => setTemplatesOpen(true) },
-      { id: 'new', label: t('cmd.newDoc'), group: 'Lagoon', icon: <FilePlus2 className="size-4" />, run: newDoc },
-      { id: 'open', label: t('export.open'), group: 'Lagoon', icon: <FolderOpen className="size-4" />, run: () => fileInput.current?.click() },
-      { id: 'format', label: t('cmd.format'), group: 'Editor', icon: <TextQuote className="size-4" />, shortcut: [MOD, '⇧', 'F'], run: format },
-      { id: 'focus', label: t('cmd.focusEditor'), group: 'Editor', icon: <Code2 className="size-4" />, run: () => editor.focus() },
-      { id: 'save', label: t('history.saveNow'), group: 'Editor', icon: <History className="size-4" />, shortcut: [MOD, 'S'], run: saveSnapshot },
-      { id: 'share', label: t('toolbar.share'), group: 'Export', icon: <Link2 className="size-4" />, run: shareLink },
-      { id: 'svg', label: t('export.svg'), group: 'Export', icon: <FileCode2 className="size-4" />, run: () => exportAction('svg') },
-      { id: 'png', label: t('export.png2x'), group: 'Export', icon: <ImageIcon className="size-4" />, run: () => exportAction('png2') },
-      { id: 'copyPng', label: t('export.copyPng'), group: 'Export', icon: <Copy className="size-4" />, run: () => exportAction('copyPng') },
-      { id: 'copyMd', label: t('export.copyMd'), group: 'Export', icon: <Copy className="size-4" />, run: () => exportAction('copyMd') },
-      { id: 'fit', label: t('cmd.fit'), group: 'View', icon: <ScanSearch className="size-4" />, shortcut: ['0'], run: () => preview.current?.fit() },
-      { id: 'swap', label: t('cmd.layoutSwap'), group: 'View', icon: <ArrowLeftRight className="size-4" />, run: () => setPrefs((p) => ({ ...p, swapped: !p.swapped })) },
-      { id: 'grid', label: t('preview.grid'), group: 'View', icon: <Grid3x3 className="size-4" />, run: () => setPrefs((p) => ({ ...p, grid: !p.grid })) },
-      { id: 'theme', label: t('cmd.toggleTheme'), group: 'View', icon: dark ? <Sun className="size-4" /> : <Moon className="size-4" />, run: toggleTheme },
-      { id: 'lang', label: t('cmd.toggleLang'), group: 'View', icon: <Languages className="size-4" />, run: toggleLang },
-    ],
+  const commands: Command[] = useMemo(() => {
+    const [lagoon, edit, out, view] = [t('palette.group.lagoon'), t('palette.group.editor'), t('palette.group.export'), t('palette.group.view')]
+    return [
+      { id: 'fix', label: t('cmd.fix'), group: lagoon, icon: <WandSparkles className="size-4" />, shortcut: [MOD, '.'], disabled: diagram.fix.state !== 'ready', run: runFix },
+      { id: 'templates', label: t('toolbar.templates'), group: lagoon, icon: <LayoutTemplate className="size-4" />, run: () => setTemplatesOpen(true) },
+      { id: 'new', label: t('cmd.newDoc'), group: lagoon, icon: <FilePlus2 className="size-4" />, run: newDoc },
+      { id: 'open', label: t('export.open'), group: lagoon, icon: <FolderOpen className="size-4" />, run: () => fileInput.current?.click() },
+      { id: 'format', label: t('cmd.format'), group: edit, icon: <TextQuote className="size-4" />, shortcut: [MOD, SHIFT, 'F'], run: format },
+      { id: 'focus', label: t('cmd.focusEditor'), group: edit, icon: <Code2 className="size-4" />, run: () => editor.focus() },
+      { id: 'save', label: t('history.saveNow'), group: edit, icon: <History className="size-4" />, shortcut: [MOD, 'S'], run: saveSnapshot },
+      { id: 'share', label: t('toolbar.share'), group: out, icon: <Link2 className="size-4" />, run: shareLink },
+      { id: 'svg', label: t('export.svg'), group: out, icon: <FileCode2 className="size-4" />, run: () => exportAction('svg') },
+      { id: 'png', label: t('export.png2x'), group: out, icon: <ImageIcon className="size-4" />, run: () => exportAction('png2') },
+      { id: 'copyPng', label: t('export.copyPng'), group: out, icon: <Copy className="size-4" />, run: () => exportAction('copyPng') },
+      { id: 'copyMd', label: t('export.copyMd'), group: out, icon: <Copy className="size-4" />, run: () => exportAction('copyMd') },
+      { id: 'fit', label: t('cmd.fit'), group: view, icon: <ScanSearch className="size-4" />, shortcut: ['0'], run: () => preview.current?.fit() },
+      { id: 'swap', label: t('cmd.layoutSwap'), group: view, icon: <ArrowLeftRight className="size-4" />, run: () => setPrefs((p) => ({ ...p, swapped: !p.swapped })) },
+      { id: 'grid', label: t('preview.grid'), group: view, icon: <Grid3x3 className="size-4" />, run: () => setPrefs((p) => ({ ...p, grid: !p.grid })) },
+      { id: 'theme', label: t('cmd.toggleTheme'), group: view, icon: dark ? <Sun className="size-4" /> : <Moon className="size-4" />, run: toggleTheme },
+      { id: 'lang', label: t('cmd.toggleLang'), group: view, icon: <Languages className="size-4" />, run: toggleLang },
+    ]
+  },
     // lang re-labels every command
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [lang, dark, diagram.fix.state, runFix, newDoc, format, saveSnapshot, shareLink, exportAction, toggleTheme, toggleLang, editor],
@@ -391,25 +421,28 @@ export default function App() {
 
   // ── layout ────────────────────────────────────────────────────
   const errorMessage = diagram.error ? explain(lang, doc.code, diagram.error).title.replace(/`/g, '') : ''
-  const status = diagram.status
+  // the parser already accepted a verified fix: don't flash the old error at it while it re-renders
+  const staleAfterFix = diagram.status === 'error' && verifiedCode === doc.code && diagram.errorFor !== doc.code
+  const status = staleAfterFix ? 'rendering' : diagram.status
 
   const editorPane = (
     <section className="relative flex h-full min-h-0 flex-col bg-surface">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-line px-3">
-        <span className="flex items-center gap-1.5 text-[12px] font-medium text-text-2">
+        <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[12px] font-medium text-text-2">
           <Code2 className="size-3.5 text-accent" />
           {t('pane.code')}
         </span>
         <span className="truncate font-mono text-[11.5px] text-muted">{fileBase}.mmd</span>
         <div className="ml-auto flex items-center">
-          <IconButton label={t('cmd.format')} shortcut={`${MOD}⇧F`} onClick={format}>
+          <IconButton label={t('cmd.format')} shortcut={chord(MOD, SHIFT, 'F')} onClick={format}>
             <TextQuote className="size-3.5" />
           </IconButton>
-          <IconButton label={t('export.open')} onClick={() => fileInput.current?.click()}>
+          {/* the last button sits at the pane's clipping edge: its tooltip opens inwards */}
+          <IconButton label={t('export.open')} tooltipSide={wide ? 'bottom' : 'left'} onClick={() => fileInput.current?.click()}>
             <FileUp className="size-3.5" />
           </IconButton>
           {wide && (
-            <IconButton label={t('cmd.layoutSwap')} onClick={() => setPrefs((p) => ({ ...p, swapped: !p.swapped }))}>
+            <IconButton label={t('cmd.layoutSwap')} tooltipSide="left" onClick={() => setPrefs((p) => ({ ...p, swapped: !p.swapped }))}>
               <ArrowLeftRight className="size-3.5" />
             </IconButton>
           )}
@@ -419,9 +452,10 @@ export default function App() {
         <Editor
           editor={editor}
           problem={diagram.error ? { line: diagram.error.line, column: diagram.error.column, length: diagram.error.atEnd ? 1 : diagram.error.length, message: errorMessage } : null}
+          bottomInset={dockHeight}
         />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
-          {diagram.status === 'error' && diagram.error && (
+        <div ref={measureDock} className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex max-h-full flex-col">
+          {status === 'error' && diagram.error && (
             <ErrorDock
               code={doc.code}
               error={diagram.error}
@@ -433,14 +467,15 @@ export default function App() {
           )}
         </div>
       </div>
-      <div className="flex h-7 shrink-0 items-center gap-3 border-t border-line px-3 text-[11px] text-muted">
+      {/* sized by the pane, not the viewport: the version, then the char count, give way in a narrow pane */}
+      <div className="@container flex h-7 shrink-0 items-center gap-3 overflow-hidden whitespace-nowrap border-t border-line px-3 text-[11px] text-muted">
         <span className="tabular-nums">{t('editor.position', { line: cursor.line, col: cursor.col })}</span>
-        <span className="tabular-nums">{t('editor.chars', { n: doc.code.length.toLocaleString() })}</span>
-        <span className="ml-auto flex items-center gap-1.5">
-          <span className="size-1.5 rounded-full bg-ok/80" />
-          {t('editor.saved')}
+        <span className="hidden tabular-nums @3xs:inline">{t('editor.chars', { n: doc.code.length.toLocaleString() })}</span>
+        <span className="ml-auto flex min-w-0 items-center gap-1.5">
+          <span className="size-1.5 shrink-0 rounded-full bg-ok/80" />
+          <span className="truncate">{t('editor.saved')}</span>
         </span>
-        <span className="hidden font-mono sm:inline">mermaid 12.2.0</span>
+        <span className="hidden font-mono @sm:inline">mermaid 12.2.0</span>
       </div>
     </section>
   )
@@ -457,6 +492,8 @@ export default function App() {
         renderCount={diagram.renderCount}
         bind={diagram.bind}
         grid={prefs.grid}
+        // a light theme's dark strokes (or the reverse) vanish on the app's own canvas: paint what the PNG export paints
+        canvasBackground={darkDiagram !== dark ? background : undefined}
         fixReady={diagram.fix.state === 'ready'}
         onFix={runFix}
         onNodeClick={onNodeClick}
@@ -464,7 +501,8 @@ export default function App() {
       {!wide && status === 'error' && (
         <button
           onClick={() => (diagram.fix.state === 'ready' ? runFix() : gotoError())}
-          className="absolute left-1/2 top-3 flex -translate-x-1/2 animate-pop items-center gap-2 rounded-full border border-danger/30 bg-surface-2/95 px-3.5 py-2 text-[12.5px] shadow-float backdrop-blur"
+          // below the preview's badge row, which says the drawing is the last valid render
+          className="absolute left-1/2 top-12 flex -translate-x-1/2 animate-pop items-center gap-2 rounded-full border border-danger/30 bg-surface-2/95 px-3.5 py-2 text-[12.5px] shadow-float backdrop-blur"
         >
           <span className="size-1.5 rounded-full bg-danger" />
           {t('status.error')}
@@ -513,10 +551,12 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line bg-bg/80 px-3 backdrop-blur sm:gap-3 sm:px-4">
+      {/* backdrop-blur makes the header a stacking context: it needs its own layer for its popovers and
+          tooltips to paint over the panes, below modals (z-80), toasts (z-90) and the drop overlay (z-95) */}
+      <header className="relative z-[60] flex h-[52px] shrink-0 items-center gap-2 border-b border-line bg-bg/80 px-3 backdrop-blur sm:gap-3 sm:px-4">
         <a href="/" className="flex shrink-0 items-center gap-2" onClick={(e) => e.preventDefault()}>
           <Logo className="size-7" />
-          <span className="hidden flex-col leading-none sm:flex">
+          <span className="hidden flex-col leading-none lg:flex">
             <span className="text-[14.5px] font-bold tracking-tight">Lagoon</span>
             <span className="mt-0.5 text-[10.5px] text-muted">{t('app.tagline')}</span>
           </span>
@@ -526,7 +566,8 @@ export default function App() {
           value={doc.title}
           onChange={(e) => setDoc((d) => ({ ...d, title: e.target.value }))}
           placeholder={t('app.untitled')}
-          className="hidden h-8 min-w-0 max-w-[260px] flex-1 rounded-lg sm:block bg-transparent px-2 text-[13.5px] font-medium outline-none transition-colors placeholder:text-muted hover:bg-surface-3 focus:bg-surface-3"
+          aria-label={t('toolbar.rename')}
+          className="hidden h-8 min-w-[120px] max-w-[260px] flex-1 rounded-lg bg-transparent px-2 text-[13.5px] font-medium outline-none transition-colors placeholder:text-muted hover:bg-surface-3 focus:bg-surface-3 focus-visible:ring-2 focus-visible:ring-accent/60 sm:block"
         />
         {statusPill}
         <div className="ml-auto flex items-center gap-0.5 sm:gap-1">
@@ -541,6 +582,8 @@ export default function App() {
             </IconButton>
           </span>
           <Popover
+            open={historyOpen}
+            onOpenChange={setHistoryOpen}
             className="max-sm:fixed max-sm:inset-x-3 max-sm:top-14 max-sm:w-auto"
             trigger={({ toggle, open }) => (
               <span className="hidden sm:inline-flex">
@@ -583,9 +626,10 @@ export default function App() {
           </span>
           <button
             onClick={() => setPaletteOpen(true)}
-            className="hidden h-8 items-center gap-1.5 rounded-lg border border-line px-2 text-[12px] text-muted transition-colors hover:border-line-strong hover:text-text md:flex"
+            aria-label={t('toolbar.command')}
+            className="hidden h-8 items-center gap-1.5 rounded-lg border border-line px-2 text-[12px] text-muted transition-colors hover:border-line-strong hover:text-text focus-visible:outline-2 focus-visible:outline-accent lg:flex"
           >
-            <CommandIcon className="size-3.5" />
+            {isMac && <CommandIcon className="size-3.5" />}
             <Kbd>{MOD}</Kbd>
             <Kbd>K</Kbd>
           </button>
@@ -593,11 +637,17 @@ export default function App() {
             open={exportOpen}
             onOpenChange={setExportOpen}
             trigger={({ toggle, open }) => (
-              <Button variant="outline" className={cx('ml-1 px-2.5 sm:px-3', open && 'bg-surface-3')} icon={<Download className="size-4" />} onClick={toggle}>
-                <span className="hidden sm:inline">{t('toolbar.export')}</span>
+              <Button
+                variant="outline"
+                aria-label={t('toolbar.export')}
+                className={cx('ml-1 px-2.5 md:px-3', open && 'bg-surface-3')}
+                icon={<Download className="size-4" />}
+                onClick={toggle}
+              >
+                <span className="hidden md:inline">{t('toolbar.export')}</span>
               </Button>
             )}
-            className="w-64"
+            className="w-64 max-sm:fixed max-sm:inset-x-3 max-sm:top-14 max-sm:w-auto"
           >
             <MenuItem icon={<ImageIcon className="size-4" />} hint="2x" onClick={() => exportAction('png2')}>
               {t('export.png')}
@@ -626,9 +676,63 @@ export default function App() {
               {t('export.mmd')}
             </MenuItem>
           </Popover>
-          <Button variant="primary" className="px-2.5 sm:px-3" icon={<Share2 className="size-4" />} onClick={shareLink}>
-            <span className="hidden sm:inline">{t('toolbar.share')}</span>
+          <Button variant="primary" aria-label={t('toolbar.share')} className="px-2.5 md:px-3" icon={<Share2 className="size-4" />} onClick={shareLink}>
+            <span className="hidden md:inline">{t('toolbar.share')}</span>
           </Button>
+          {/* phones have no room for the title, History, the language switch or a ⌘K key */}
+          <Popover
+            className="w-64"
+            trigger={({ toggle, open }) => (
+              <span className="sm:hidden">
+                <IconButton label={t('toolbar.more')} active={open} onClick={toggle}>
+                  <Ellipsis className="size-4" />
+                </IconButton>
+              </span>
+            )}
+          >
+            {(close) => (
+              <>
+                <label className="block px-2.5 pb-2 pt-1 text-[11.5px] text-muted">
+                  {t('toolbar.rename')}
+                  <input
+                    value={doc.title}
+                    onChange={(e) => setDoc((d) => ({ ...d, title: e.target.value }))}
+                    onKeyDown={(e) => e.key === 'Enter' && close()}
+                    placeholder={t('app.untitled')}
+                    className="mt-1 block h-9 w-full rounded-lg border border-line bg-surface px-2.5 text-[13.5px] font-medium text-text outline-none placeholder:text-muted focus-visible:ring-2 focus-visible:ring-accent/60"
+                  />
+                </label>
+                <MenuSeparator />
+                <MenuItem
+                  icon={<History className="size-4" />}
+                  onClick={() => {
+                    close()
+                    setHistoryOpen(true)
+                  }}
+                >
+                  {t('toolbar.history')}
+                </MenuItem>
+                <MenuItem
+                  icon={<Languages className="size-4" />}
+                  onClick={() => {
+                    close()
+                    toggleLang()
+                  }}
+                >
+                  {t('toolbar.lang')}
+                </MenuItem>
+                <MenuItem
+                  icon={<CommandIcon className="size-4" />}
+                  onClick={() => {
+                    close()
+                    setPaletteOpen(true)
+                  }}
+                >
+                  {t('toolbar.command')}
+                </MenuItem>
+              </>
+            )}
+          </Popover>
         </div>
       </header>
 
@@ -676,7 +780,7 @@ export default function App() {
       <input
         ref={fileInput}
         type="file"
-        accept=".mmd,.mermaid,.md,.txt,text/plain"
+        accept=".mmd,.mermaid,.md,.markdown,.txt,text/plain"
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0]

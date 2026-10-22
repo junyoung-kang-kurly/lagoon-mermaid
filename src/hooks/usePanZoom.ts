@@ -8,13 +8,21 @@ export interface View {
 
 const MIN = 0.08
 const MAX = 10
-const clamp = (v: number) => Math.min(MAX, Math.max(MIN, v))
+const clamp = (v: number, min = MIN) => Math.min(MAX, Math.max(min, v))
+
+type Size = { width: number; height: number }
+
+/** the scale that shows all of `content` in `el` with some room around it; a very wide diagram goes below MIN */
+function fitScale(el: HTMLElement, content: Size) {
+  const pad = Math.min(56, el.clientWidth * 0.08)
+  return Math.max(0.01, Math.min((el.clientWidth - pad * 2) / content.width, (el.clientHeight - pad * 2) / content.height, 1.75))
+}
 
 /**
  * Figma-style canvas: drag or two-finger scroll to pan, pinch / ⌘+scroll / mouse
  * wheel notches to zoom around the cursor. Reports clicks that were not drags.
  */
-export function usePanZoom(content: { width: number; height: number } | null, onClick?: (target: Element) => void) {
+export function usePanZoom(content: Size | null, onClick?: (target: Element) => void) {
   const ref = useRef<HTMLDivElement>(null)
   const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 })
   const viewRef = useRef(view)
@@ -33,13 +41,15 @@ export function usePanZoom(content: { width: number; height: number } | null, on
     (animate = true) => {
       const el = ref.current
       if (!el || !content) return
-      const pad = Math.min(56, el.clientWidth * 0.08)
-      const k = clamp(Math.min((el.clientWidth - pad * 2) / content.width, (el.clientHeight - pad * 2) / content.height, 1.75))
+      const k = fitScale(el, content)
       apply({ k, x: (el.clientWidth - content.width * k) / 2, y: (el.clientHeight - content.height * k) / 2 }, animate)
       touched.current = false
     },
     [content, apply],
   )
+
+  // zooming out always reaches the fitted view, however small that is
+  const floor = useCallback(() => (ref.current && content ? Math.min(MIN, fitScale(ref.current, content)) : MIN), [content])
 
   const zoomBy = useCallback(
     (factor: number, cx?: number, cy?: number, animate = false) => {
@@ -48,12 +58,12 @@ export function usePanZoom(content: { width: number; height: number } | null, on
       const v = viewRef.current
       const px = cx ?? el.clientWidth / 2
       const py = cy ?? el.clientHeight / 2
-      const k = clamp(v.k * factor)
+      const k = clamp(v.k * factor, floor())
       const ratio = k / v.k
       apply({ k, x: px - (px - v.x) * ratio, y: py - (py - v.y) * ratio }, animate)
       touched.current = true
     },
-    [apply],
+    [apply, floor],
   )
 
   const actualSize = useCallback(() => {
@@ -116,7 +126,7 @@ export function usePanZoom(content: { width: number; height: number } | null, on
         const [a, b] = [...pointers.values()]
         const rect = el.getBoundingClientRect()
         const dist = Math.hypot(a.x - b.x, a.y - b.y)
-        const target = clamp((pinch.k * dist) / pinch.dist)
+        const target = clamp((pinch.k * dist) / pinch.dist, floor())
         zoomBy(target / viewRef.current.k, (a.x + b.x) / 2 - rect.left, (a.y + b.y) / 2 - rect.top)
         if (start) start.moved = true
         return
@@ -159,7 +169,7 @@ export function usePanZoom(content: { width: number; height: number } | null, on
       el.removeEventListener('pointercancel', onUp)
       el.removeEventListener('dblclick', onDouble)
     }
-  }, [apply, zoomBy, fit])
+  }, [apply, zoomBy, fit, floor])
 
   return { ref, view, animating, fit, zoomBy, actualSize, wasTouched: () => touched.current }
 }

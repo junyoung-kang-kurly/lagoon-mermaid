@@ -21,11 +21,13 @@ export interface DiagramState {
   diagramType: string | null
   ms: number | null
   error: Diagnostic | null
+  /** the code `error` was found in; lags behind the editor until the next validation */
+  errorFor: string | null
   bind?: (el: Element) => void
   renderCount: number
 }
 
-const INITIAL: DiagramState = { status: 'loading', svg: null, svgCode: null, diagramType: null, ms: null, error: null, renderCount: 0 }
+const INITIAL: DiagramState = { status: 'loading', svg: null, svgCode: null, diagramType: null, ms: null, error: null, errorFor: null, renderCount: 0 }
 
 export function useDiagram(code: string, config: MermaidConfig) {
   const [state, setState] = useState<DiagramState>(INITIAL)
@@ -49,7 +51,7 @@ export function useDiagram(code: string, config: MermaidConfig) {
         const diag = await validate(code)
         if (mine !== seq.current) return
         if (diag) {
-          setState((s) => ({ ...s, status: 'error', error: diag }))
+          setState((s) => ({ ...s, status: 'error', error: diag, errorFor: code }))
           return
         }
         const out = await renderDiagram(code, config)
@@ -62,12 +64,13 @@ export function useDiagram(code: string, config: MermaidConfig) {
           diagramType: out.diagramType,
           ms: out.ms,
           error: null,
+          errorFor: null,
           bind: out.bindFunctions,
           renderCount: s.renderCount + 1,
         }))
       } catch (error) {
         if (mine !== seq.current) return
-        setState((s) => ({ ...s, status: 'error', error: diagnose(code, error) }))
+        setState((s) => ({ ...s, status: 'error', error: diagnose(code, error), errorFor: code }))
       } finally {
         window.clearTimeout(slow)
       }

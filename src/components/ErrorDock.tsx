@@ -1,9 +1,10 @@
 import { ChevronDown, CornerDownRight, Eye, Lightbulb, Loader2, Sparkles, TriangleAlert } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { FixState } from '../hooks/useDiagram'
 import type { Diagnostic } from '../lib/diagnose'
 import { explain } from '../lib/explain'
 import { t, useLang } from '../lib/i18n'
+import { MOD } from '../lib/platform'
 import { Button, Kbd, RichText, cx } from './ui'
 
 interface Props {
@@ -19,6 +20,9 @@ export function ErrorDock({ code, error, fix, onGoto, onApplyFix, onPreviewFix }
   const lang = useLang()
   const [collapsed, setCollapsed] = useState(false)
   const [showRaw, setShowRaw] = useState(false)
+  const snippet = useRef<HTMLButtonElement>(null)
+  const mark = useRef<HTMLSpanElement>(null)
+  const ids = useId()
   const info = useMemo(() => explain(lang, code, error), [lang, code, error])
   const lineText = code.replace(/\r\n?/g, '\n').split('\n')[error.line - 1] ?? ''
   const start = Math.min(error.column, lineText.length)
@@ -26,9 +30,19 @@ export function ErrorDock({ code, error, fix, onGoto, onApplyFix, onPreviewFix }
   const steps = fix.result?.steps.length ?? 0
   const partial = fix.state === 'ready' && !fix.result?.ok
 
+  // on a long line the error can sit far past the visible part of the snippet: bring it into view
+  useLayoutEffect(() => {
+    const box = snippet.current
+    const m = mark.current
+    if (!box || !m) return
+    box.scrollLeft = m.offsetLeft + m.offsetWidth > box.clientWidth ? m.offsetLeft - box.clientWidth / 2 : 0
+  }, [lineText, start, end, collapsed])
+
   return (
-    <div className="pointer-events-auto mx-3 mb-3 animate-rise overflow-hidden rounded-2xl border border-danger/25 bg-surface-2/95 shadow-float backdrop-blur-md">
-      <div className="flex items-start gap-3 px-4 pt-3.5">
+    // capped below the editor height so code stays visible above it; only the explanation scrolls,
+    // and a narrow card (a squeezed editor pane) drops the indent and the hint so its actions keep one row
+    <div className="@container pointer-events-auto mx-3 mb-3 flex max-h-[min(calc(70dvh-7rem),420px)] min-h-0 animate-rise flex-col overflow-hidden rounded-2xl border border-danger/25 bg-surface-2/95 shadow-float backdrop-blur-md">
+      <div className="flex shrink-0 items-start gap-3 px-4 pt-3.5">
         <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-danger-soft text-danger">
           <TriangleAlert className="size-3.5" />
         </span>
@@ -44,22 +58,29 @@ export function ErrorDock({ code, error, fix, onGoto, onApplyFix, onPreviewFix }
         <button
           onClick={() => setCollapsed((c) => !c)}
           className="-mr-1 rounded-md p-1 text-muted hover:bg-surface-3 hover:text-text"
-          aria-label="toggle"
+          aria-label={t(collapsed ? 'error.expand' : 'error.collapse')}
+          title={t(collapsed ? 'error.expand' : 'error.collapse')}
+          aria-expanded={!collapsed}
+          aria-controls={`${ids}body`}
         >
           <ChevronDown className={cx('size-4 transition-transform', collapsed && 'rotate-180')} />
         </button>
       </div>
 
       {!collapsed && (
-        <div className="space-y-2.5 px-4 pb-1 pl-[52px] pt-2">
+        <div id={`${ids}body`} className="min-h-0 space-y-2.5 overflow-y-auto overscroll-contain px-4 pb-1 pt-2 @sm:pl-[52px]">
           {lineText.trim() && (
             <button
+              ref={snippet}
               onClick={onGoto}
-              className="block w-full overflow-x-auto rounded-lg border border-line bg-surface px-3 py-2 text-left font-mono text-[12px] leading-relaxed text-text-2 hover:border-line-strong"
+              className="relative block w-full overflow-x-auto rounded-lg border border-line bg-surface px-3 py-2 text-left font-mono text-[12px] leading-relaxed text-text-2 hover:border-line-strong"
             >
               <span className="mr-3 select-none text-muted/70">{error.line}</span>
               <span className="whitespace-pre">{lineText.slice(0, start)}</span>
-              <span className="whitespace-pre rounded-[3px] bg-danger/20 text-danger underline decoration-danger decoration-wavy underline-offset-[3px]">
+              <span
+                ref={mark}
+                className="whitespace-pre rounded-[3px] bg-danger/20 text-danger underline decoration-danger decoration-wavy underline-offset-[3px]"
+              >
                 {lineText.slice(start, end) || ' '}
               </span>
               <span className="whitespace-pre">{lineText.slice(end)}</span>
@@ -72,18 +93,23 @@ export function ErrorDock({ code, error, fix, onGoto, onApplyFix, onPreviewFix }
               <RichText text={info.hint} />
             </div>
           )}
-          <button onClick={() => setShowRaw((v) => !v)} className="text-[11.5px] text-muted hover:text-text-2">
-            {t('error.raw')} {showRaw ? '▴' : '▾'}
+          <button
+            onClick={() => setShowRaw((v) => !v)}
+            aria-expanded={showRaw}
+            aria-controls={`${ids}raw`}
+            className="text-[11.5px] text-muted hover:text-text-2"
+          >
+            {t('error.raw')} <span aria-hidden="true">{showRaw ? '▴' : '▾'}</span>
           </button>
           {showRaw && (
-            <pre className="max-h-40 overflow-auto rounded-lg border border-line bg-surface p-2.5 font-mono text-[11px] leading-relaxed text-muted">
+            <pre id={`${ids}raw`} className="max-h-40 overflow-auto rounded-lg border border-line bg-surface p-2.5 font-mono text-[11px] leading-relaxed text-muted">
               {error.message}
             </pre>
           )}
         </div>
       )}
 
-      <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-line bg-surface/50 px-4 py-2.5 pl-[52px]">
+      <div className="mt-2 flex shrink-0 flex-wrap items-center gap-2 border-t border-line bg-surface/50 px-4 py-2.5 @max-xs:gap-1.5 @sm:pl-[52px]">
         {fix.state === 'searching' && (
           <span className="flex items-center gap-2 text-[12.5px] text-muted">
             <Loader2 className="size-3.5 animate-spin" />
@@ -92,16 +118,16 @@ export function ErrorDock({ code, error, fix, onGoto, onApplyFix, onPreviewFix }
         )}
         {fix.state === 'ready' && (
           <>
-            <Button variant="primary" onClick={onApplyFix} icon={<Sparkles className="size-3.5" />} className="pulse-ring">
+            <Button variant="primary" onClick={onApplyFix} icon={<Sparkles className="size-3.5" />} className="pulse-ring @max-xs:px-2">
               {t('error.fixCta')}
               <span className="rounded bg-black/15 px-1.5 text-[11px] font-semibold">{t('error.fixCount', { n: steps })}</span>
             </Button>
-            <Button variant="ghost" onClick={onPreviewFix} icon={<Eye className="size-3.5" />}>
+            <Button variant="ghost" onClick={onPreviewFix} icon={<Eye className="size-3.5" />} className="@max-xs:px-2">
               {t('error.review')}
             </Button>
-            <span className="ml-auto hidden items-center gap-1 text-[11.5px] text-muted sm:flex">
+            <span className="ml-auto hidden items-center gap-1 text-[11.5px] text-muted @md:flex">
               {partial ? <span className="text-warn">{t('error.partial')}</span> : <span>{t('fix.verified')}</span>}
-              <Kbd className="ml-1">⌘</Kbd>
+              <Kbd className="ml-1">{MOD}</Kbd>
               <Kbd>.</Kbd>
             </span>
           </>

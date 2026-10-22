@@ -58,11 +58,10 @@ export function CommandPalette({ open, onClose, commands }: { open: boolean; onC
   }
 
   return (
-    <Modal open={open} onClose={onClose} className="max-w-xl overflow-hidden">
+    <Modal open={open} onClose={onClose} className="max-w-xl overflow-hidden" label={t('toolbar.command')}>
       <div className="flex items-center gap-3 border-b border-line px-4">
         <Search className="size-4 text-muted" />
         <input
-          autoFocus
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {

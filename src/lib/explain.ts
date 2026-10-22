@@ -1,5 +1,5 @@
 import type { Diagnostic } from './diagnose'
-import { DIAGRAM_KEYWORDS, type DiagramFamily, SHAPES, closestKeyword, familyOf, header } from './fix/text'
+import { DIAGRAM_KEYWORDS, type DiagramFamily, LINK_TOKEN, SHAPES, closeOpenBrackets, closestKeyword, familyOf, header } from './fix/text'
 import { type Lang, type MessageKey, translate } from './i18n'
 
 export interface Explanation {
@@ -66,6 +66,9 @@ const SYMBOL_DIRECTIONS = ['BR', '<', '>', '^', 'v']
 const SEQ_ARROW = /<<-->>|<<->>|-->>|->>|-->|->|--x|-x|--\)|-\)/
 const ARROWISH = /[-=<>.~—–―‐‑→⇒]/
 const ID_CHAR = /[\p{L}\p{N}_]/u
+// a label still open when a link comes: `A[Start --> B[End]` stops at B's `[`, which only looks like a stray one
+const LABEL_INTO_LINK = new RegExp(`[[({][^[\\](){}"]*${LINK_TOKEN.source}[^[\\](){}"]*$`)
+const CLOSER_OF: Record<string, string> = { '[': ']', '(': ')', '{': '}' }
 
 export function humanToken(lang: Lang, token: string, family: DiagramFamily = 'other'): string | null {
   const symbol = FAMILY_SYMBOLS[family]?.[token] ?? SYMBOLS[token]
@@ -260,6 +263,17 @@ export function explain(lang: Lang, code: string, d: Diagnostic): Explanation {
     const tok = d.foundToken ?? ''
     const wantsLabelClose = d.expected.some((e) => ['SQE', 'PE', 'DIAMOND_STOP', 'TEXT', 'UNICODE_TEXT'].includes(e))
 
+    const openLabel = family === 'flowchart' && LABEL_BREAKERS.has(tok) && wantsLabelClose ? lineText.slice(0, d.column).match(LABEL_INTO_LINK) : null
+    const closed = openLabel && closeOpenBrackets(lineText)
+    if (openLabel && closed) {
+      const open = openLabel[0][0]
+      return {
+        title: tr('explain.unclosed.title', { open }),
+        detail: tr('explain.unclosed.detail', { open, close: CLOSER_OF[open] }),
+        hint: tr('explain.unclosed.hint', { fix: closed.trim() }),
+        expected,
+      }
+    }
     if (family === 'flowchart' && LABEL_BREAKERS.has(tok) && wantsLabelClose && !atEnd) {
       // STR text comes without its quotes, so name the quote itself
       const quote = tok === 'STR'

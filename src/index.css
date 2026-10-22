@@ -11,14 +11,15 @@
   --border-strong: #cfd6de;
   --text: #0e1726;
   --text-2: #354253;
-  --muted: #6b7889;
-  --accent: #0d9488;
-  --accent-2: #0284c7;
-  --accent-soft: rgba(13, 148, 136, 0.1);
+  --muted: #5d6a7b;
+  /* deep enough for white button text and for accent/ok text on their 10% tints (WCAG AA) */
+  --accent: #0d6e66;
+  --accent-2: #0369a1;
+  --accent-soft: rgba(13, 110, 102, 0.1);
   --accent-ink: #ffffff;
   --danger: #dc2626;
   --danger-soft: rgba(220, 38, 38, 0.07);
-  --ok: #059669;
+  --ok: #04724f;
   --warn: #c2410c;
   --canvas: #fbfcfd;
   --dot: rgba(15, 23, 42, 0.09);
@@ -47,7 +48,7 @@
   --border-strong: #2a3441;
   --text: #e8eef4;
   --text-2: #aab6c4;
-  --muted: #6f7d8e;
+  --muted: #8391a3;
   --accent: #2dd4bf;
   --accent-2: #38bdf8;
   --accent-soft: rgba(45, 212, 191, 0.1);
@@ -213,6 +214,7 @@ kbd {
 }
 .diagram-host.clickable .node,
 .diagram-host.clickable .actor,
+.diagram-host.clickable .actor-man,
 .diagram-host.clickable .classGroup,
 .diagram-host.clickable .er.entityBox,
 .diagram-host.clickable [id^='state-'] {
@@ -237,7 +239,7 @@ kbd {
   font-variant-ligatures: none;
 }
 .cm-content {
-  padding: 14px 0 120px !important;
+  padding: 14px 0 max(120px, calc(var(--editor-inset, 0px) + 24px)) !important;
   caret-color: var(--accent);
 }
 .cm-line {
@@ -398,4 +400,19 @@ kbd {
 [data-separator]:focus-visible {
   background: var(--accent);
   outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-ring,
+  .shimmer {
+    animation: none !important;
+  }
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

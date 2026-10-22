@@ -97,6 +97,18 @@ const AFTER_SHAPE = /^\s*($|[;&:|%<]|[-=.~])/
 // a leading or trailing slash would read as a trapezoid, `@` as an edge id
 const NEEDS_QUOTES = /[()[\]{}"|@]|^\s*[/\\]|[/\\]\s*$/
 
+export const LINK_TOKEN = /<?(?:--+[-xo>]|==+[=xo>]|-?\.+-[xo>]?|~~~+)/
+const INTO_NEXT_NODE = new RegExp(`${LINK_TOKEN.source}\\s*(?:\\|[^|]*\\|\\s*)?[\\p{L}\\p{N}_]+(?=[[({>])`, 'u')
+
+/** `A[Start --> B[End]`: the `]` belongs to B, so A's label is the one left open, not one to quote */
+function runsIntoNextNode(content: string): boolean {
+  const m = INTO_NEXT_NODE.exec(content)
+  if (!m) return false
+  const rest = content.slice(m.index + m[0].length)
+  const [open, close] = SHAPES.find(([o]) => rest.startsWith(o))!
+  return !rest.includes(close, open.length)
+}
+
 function quoteContent(content: string): string | null {
   const trimmed = content.trim()
   if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
@@ -147,6 +159,7 @@ export function quoteLabelsInLine(line: string): string {
         while (k !== -1 && !AFTER_SHAPE.test(line.slice(k + close.length))) k = line.indexOf(close, k + 1)
         if (k === -1) continue
         const content = line.slice(j + open.length, k)
+        if (runsIntoNextNode(content)) continue
         out += line.slice(i, j) + open + (quoteContent(content) ?? content) + close
         i = k + close.length
         shaped = true
@@ -242,7 +255,7 @@ export function closeOpenBrackets(line: string): string | null {
 
 // ── free text vs. syntax ────────────────────────────────────────────────────
 
-const LINK_AT = /<?(?:--+[-xo>]|==+[=xo>]|-?\.+-[xo>]?|~~~+)/y
+const LINK_AT = new RegExp(LINK_TOKEN.source, 'y')
 const START_LINK_AT = /<?(?:--|==|-\.)/y
 // edge text runs to the next link; a typographic arrow counts too, so it can still be repaired
 const LINK_END = /<?(?:--+[-xo>]|==+[=xo>]|-?\.+-[xo>]?|~~~+)|[—–―‐‑]+>|[→⟶➔➜➝➞⇢⇒⟹↔⟷]/g

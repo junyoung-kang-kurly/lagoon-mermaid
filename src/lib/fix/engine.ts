@@ -7,6 +7,21 @@ export type Validate = (code: string) => Promise<Diagnostic | null>
 export interface FixStep extends Candidate {
   ruleId: string
   before: string
+  /** 1-based lines of the result that differ from `before` */
+  changed: number[]
+}
+
+/** lines of `after` that are new or edited compared with `before`, matched from both ends */
+function changedLines(before: string, after: string): number[] {
+  const a = splitLines(before)
+  const b = splitLines(after)
+  let head = 0
+  while (head < a.length && head < b.length && a[head] === b[head]) head++
+  let tail = 0
+  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++
+  const out: number[] = []
+  for (let i = head; i < b.length - tail; i++) if (!a.includes(b[i])) out.push(i + 1)
+  return out
 }
 
 export interface FixResult {
@@ -61,7 +76,7 @@ async function bestCandidate(
       const next = await validate(cand.code)
       const score = gain(diag, code, next, cand)
       if (score === null) continue
-      const step: FixStep = { ...cand, ruleId: rule.id, before: code }
+      const step: FixStep = { ...cand, ruleId: rule.id, before: code, changed: changedLines(code, cand.code) }
       if (!next) return { step, diag: null }
       if (!best || score > best.score) best = { step, diag: next, score }
     }

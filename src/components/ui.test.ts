@@ -1,7 +1,8 @@
-import { createElement } from 'react'
+import { Fragment, act, createElement, createRef } from 'react'
+import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
-import { RichText } from './ui'
+import { describe, expect, it, vi } from 'vitest'
+import { Modal, RichText } from './ui'
 
 const html = (text: string) =>
   renderToStaticMarkup(createElement(RichText, { text }))
@@ -24,5 +25,63 @@ describe('RichText', () => {
 
   it('uses no regex lookbehind, which Safari < 16.4 cannot parse', () => {
     expect(RichText.toString()).not.toMatch(/\(\?<[!=]/)
+  })
+})
+
+describe('Modal focus', () => {
+  ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+  // jsdom has no layout, so every element would look hidden to the focusable filter
+  vi.spyOn(Element.prototype, 'getClientRects').mockReturnValue([new DOMRect()] as unknown as DOMRectList)
+
+  const tab = (shiftKey = false) =>
+    act(() => {
+      const e = new KeyboardEvent('keydown', { key: 'Tab', shiftKey, bubbles: true, cancelable: true })
+      document.activeElement?.dispatchEvent(e)
+      return e.defaultPrevented
+    })
+
+  function mount(initialFocus?: ReturnType<typeof createRef<HTMLButtonElement>>) {
+    const opener = document.body.appendChild(document.createElement('button'))
+    opener.focus()
+    const root = createRoot(document.body.appendChild(document.createElement('div')))
+    const render = (open: boolean) =>
+      act(() =>
+        root.render(
+          createElement(Modal, {
+            open,
+            onClose() {},
+            label: 'Palette',
+            initialFocus,
+            children: createElement(Fragment, null, createElement('button', null, 'one'), createElement('button', { ref: initialFocus }, 'two')),
+          }),
+        ),
+      )
+    return { opener, render }
+  }
+
+  it('focuses the first control, keeps Tab inside and returns focus to the opener', async () => {
+    const { opener, render } = mount()
+    await render(true)
+    const dialog = document.querySelector('[role=dialog]')!
+    const [one, two] = dialog.querySelectorAll('button')
+    expect(dialog.getAttribute('aria-label')).toBe('Palette')
+    expect(document.activeElement).toBe(one)
+    two.focus()
+    expect(await tab()).toBe(true)
+    expect(document.activeElement).toBe(one)
+    expect(await tab(true)).toBe(true)
+    expect(document.activeElement).toBe(two)
+    expect(await tab(true)).toBe(false) // from the last control backwards: the browser's own move stays inside
+    await render(false)
+    expect(document.activeElement).toBe(opener)
+  })
+
+  it('starts on initialFocus when given', async () => {
+    const ref = createRef<HTMLButtonElement>()
+    const { render } = mount(ref)
+    await render(true)
+    expect(document.activeElement).toBe(ref.current)
+    expect(ref.current?.textContent).toBe('two')
+    await render(false)
   })
 })

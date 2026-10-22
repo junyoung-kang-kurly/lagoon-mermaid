@@ -1,5 +1,6 @@
 import { diffChars, diffLines } from 'diff'
 import { type ReactNode, useMemo } from 'react'
+import { t, useLang } from '../lib/i18n'
 import { cx } from './ui'
 
 interface Row {
@@ -60,6 +61,7 @@ function align(dels: string[], adds: string[]): Array<[string | undefined, strin
 }
 
 export function DiffView({ before, after, context = 3 }: { before: string; after: string; context?: number }) {
+  useLang()
   const rows = useMemo(() => {
     const parts = diffLines(before, after)
     const out: Row[] = []
@@ -101,14 +103,14 @@ export function DiffView({ before, after, context = 3 }: { before: string; after
 
   return (
     <div className="overflow-hidden rounded-xl border border-line bg-surface font-mono text-[12.5px] leading-[1.7]">
-      <div className="max-h-[42vh] overflow-auto">
+      <div tabIndex={0} className="max-h-[42vh] overflow-auto outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent">
         <table className="w-full border-collapse">
           <tbody>
             {rows.map((r, i) =>
               r.kind === 'gap' ? (
                 <tr key={i} className="bg-surface-3/50 text-muted">
-                  <td colSpan={3} className="px-3 py-0.5 text-[11px]">
-                    ⋯ {r.content} lines
+                  <td colSpan={4} className="px-3 py-0.5 text-[11px]">
+                    ⋯ {r.content === 1 ? t('common.lineOne') : t('common.lines', { n: r.content as number })}
                   </td>
                 </tr>
               ) : (
@@ -116,7 +118,9 @@ export function DiffView({ before, after, context = 3 }: { before: string; after
                   key={i}
                   className={cx(r.kind === 'add' && 'bg-ok/[0.09]', r.kind === 'del' && 'bg-danger/[0.08]')}
                 >
-                  <td className="w-9 select-none border-r border-line px-2 text-right align-top text-[11px] text-muted/70">{r.oldNo ?? ''}</td>
+                  {/* old and new numbering: fix steps refer to the new one */}
+                  <td className="w-8 select-none px-1.5 text-right align-top text-[11px] text-muted/70">{r.oldNo ?? ''}</td>
+                  <td className="w-8 select-none border-r border-line px-1.5 text-right align-top text-[11px] text-muted/70">{r.newNo ?? ''}</td>
                   <td className="w-5 select-none text-center align-top">
                     <span className={cx(r.kind === 'add' && 'text-ok', r.kind === 'del' && 'text-danger')}>
                       {r.kind === 'add' ? '+' : r.kind === 'del' ? '−' : ''}
