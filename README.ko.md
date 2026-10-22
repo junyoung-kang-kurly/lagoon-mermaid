@@ -179,11 +179,11 @@ Expecting 'SQE', 'DOUBLECIRCLEEND', 'PE', '-)', 'STADIUMEND', 'SUBROUTINEEND', '
 
 <p align="center">
   <img src="docs/readme/hero-ko.png" width="49%" alt="다크 모드의 Lagoon. 왼쪽은 Mermaid 코드, 오른쪽은 주문 서비스 subgraph와 재고·결제 원통, 승인·확보·거절 라벨이 붙은 엣지로 된 주문 처리 흐름 flowchart">
-  <img src="docs/readme/light-en.png" width="49%" alt="라이트 모드의 Lagoon. 자동 번호가 붙은 메시지, alt/else 블록, 노트가 있는 Checkout sequence 다이어그램">
+  <img src="docs/readme/light-ko.png" width="49%" alt="라이트 모드의 Lagoon. 자동 번호가 붙은 메시지, alt/else 블록, 노트가 있는 결제 시퀀스 다이어그램">
 </p>
 <p align="center"><sub>다크든 라이트든, Lagoon 전용 다이어그램 테마가 앱을 따라가요.</sub></p>
 
-<img align="right" src="docs/readme/mobile-en.png" width="200" alt="휴대폰에서 본 Lagoon. 미리보기 탭에 Checkout pipeline flowchart가 떠 있어요">
+<img align="right" src="docs/readme/mobile-ko.png" width="200" alt="휴대폰에서 본 Lagoon. 미리보기 탭에 주문 처리 흐름 flowchart가 떠 있어요">
 
 **쓰기**
 
@@ -226,7 +226,7 @@ Expecting 'SQE', 'DOUBLECIRCLEEND', 'PE', '-)', 'STADIUMEND', 'SUBROUTINEEND', '
 Lagoon은 mermaid를 흉내 낸 렌더러가 아니라 mermaid 12.2.0으로 직접 그려요. 아래 22종은 실시간 썸네일이 붙은 템플릿으로 들어 있고, 모든 템플릿이 파싱되는지 테스트로 확인해요.
 
 <p align="center">
-  <img src="docs/readme/templates-en.png" width="85%" alt="템플릿 갤러리: flowchart, sequence, class, state, ER, gantt, pie 등의 실시간 썸네일과, 고장 난 다이어그램으로 자동 수정을 체험하는 카드">
+  <img src="docs/readme/templates-ko.png" width="85%" alt="템플릿 갤러리: flowchart, sequence, class, state, ER, gantt, pie 등의 실시간 썸네일과, 고장 난 다이어그램으로 자동 수정을 체험하는 카드">
 </p>
 
 Flowchart · Sequence · Class · State · Entity Relationship · Gantt · Pie · Mindmap · Timeline · Git graph · User journey · Quadrant · XY chart · Sankey · Block · Architecture · Kanban · Packet · C4 context · Requirement · Radar · Treemap
